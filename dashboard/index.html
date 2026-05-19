@@ -1,0 +1,1065 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BolnaMonitor — Voice Pipeline Drift Detection</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #080c10;
+      --surface: #0d1117;
+      --surface-2: #161b22;
+      --surface-3: #1c2128;
+      --border: #21262d;
+      --border-active: #30363d;
+      --text: #e6edf3;
+      --text-muted: #7d8590;
+      --text-dim: #444c56;
+      --ok: #3fb950;
+      --ok-glow: rgba(63, 185, 80, 0.15);
+      --warn: #d29922;
+      --warn-glow: rgba(210, 153, 34, 0.15);
+      --crit: #f85149;
+      --crit-glow: rgba(248, 81, 73, 0.15);
+      --accent: #388bfd;
+      --accent-dim: rgba(56, 139, 253, 0.15);
+      --font-mono: 'IBM Plex Mono', monospace;
+      --font-sans: 'IBM Plex Sans', sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* HEADER */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo-mark {
+      width: 28px;
+      height: 28px;
+      background: linear-gradient(135deg, #388bfd, #1f6feb);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      color: white;
+      letter-spacing: -0.5px;
+    }
+
+    .logo-text {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: -0.3px;
+    }
+
+    .logo-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .last-updated {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .refresh-btn {
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 5px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .refresh-btn:hover { border-color: var(--border-active); color: var(--text); }
+
+    .live-dot {
+      width: 7px; height: 7px;
+      background: var(--ok);
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+      box-shadow: 0 0 6px var(--ok);
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* LAYOUT */
+    main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+
+    /* SUMMARY CARDS */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      transition: border-color 0.15s;
+    }
+    .stat-card:hover { border-color: var(--border-active); }
+
+    .stat-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 6px;
+    }
+
+    .stat-value {
+      font-family: var(--font-mono);
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    .stat-sub {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+
+    .stat-value.ok { color: var(--ok); }
+    .stat-value.warn { color: var(--warn); }
+    .stat-value.crit { color: var(--crit); }
+
+    /* ALERT BANNER */
+    .alert-banner {
+      background: rgba(248, 81, 73, 0.08);
+      border: 1px solid rgba(248, 81, 73, 0.3);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      display: none;
+    }
+    .alert-banner.visible { display: block; }
+    .alert-banner-title {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--crit);
+      font-weight: 600;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .alert-banner-items {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    /* MAIN TABLE SECTION */
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .section-title {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+
+    .filter-tabs {
+      display: flex;
+      gap: 4px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 3px;
+    }
+
+    .filter-tab {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      color: var(--text-muted);
+      transition: all 0.15s;
+      border: none;
+      background: transparent;
+    }
+    .filter-tab.active {
+      background: var(--surface-3);
+      color: var(--text);
+    }
+
+    /* COMBO TABLE */
+    .combo-table {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+
+    .table-head {
+      display: grid;
+      grid-template-columns: 28px 1fr 100px 90px 90px 90px 90px 110px 130px;
+      gap: 0;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--border);
+      padding: 8px 16px;
+    }
+
+    .th {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      font-weight: 500;
+    }
+
+    .combo-row {
+      display: grid;
+      grid-template-columns: 28px 1fr 100px 90px 90px 90px 90px 110px 130px;
+      gap: 0;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.1s;
+      align-items: center;
+    }
+    .combo-row:last-child { border-bottom: none; }
+    .combo-row:hover { background: var(--surface-2); }
+    .combo-row.selected { background: var(--accent-dim); border-color: rgba(56, 139, 253, 0.3); }
+    .combo-row.crit { border-left: 3px solid var(--crit); }
+    .combo-row.warning { border-left: 3px solid var(--warn); }
+    .combo-row.ok { border-left: 3px solid transparent; }
+
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      margin: auto;
+    }
+    .status-dot.ok { background: var(--ok); box-shadow: 0 0 5px var(--ok); }
+    .status-dot.warning { background: var(--warn); box-shadow: 0 0 5px var(--warn); animation: pulse 1.5s infinite; }
+    .status-dot.critical { background: var(--crit); box-shadow: 0 0 5px var(--crit); animation: pulse 0.8s infinite; }
+
+    .td {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .combo-name {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .combo-pipeline {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .provider-badge {
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .provider-badge.asr { border-color: rgba(56, 139, 253, 0.4); color: #79c0ff; }
+    .provider-badge.llm { border-color: rgba(63, 185, 80, 0.4); color: #7ee787; }
+    .provider-badge.tts { border-color: rgba(188, 140, 255, 0.4); color: #d2a8ff; }
+
+    .arrow { color: var(--text-dim); font-size: 9px; }
+
+    .lang-badge {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1px 5px;
+      color: var(--text-dim);
+    }
+
+    .latency-val {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .latency-val.good { color: var(--ok); }
+    .latency-val.mid  { color: var(--text); }
+    .latency-val.slow { color: var(--warn); }
+    .latency-val.bad  { color: var(--crit); }
+
+    .zscore {
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+    .zscore.high { color: var(--crit); font-weight: 600; }
+    .zscore.mid  { color: var(--warn); }
+    .zscore.low  { color: var(--text-dim); }
+
+    .error-rate {
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+    .error-rate.bad { color: var(--crit); }
+    .error-rate.ok  { color: var(--text-dim); }
+
+    .sparkline-cell { display: flex; align-items: center; }
+    .sparkline-cell canvas { display: block; }
+
+    .alert-pill {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .alert-pill.ok       { background: var(--ok-glow);   color: var(--ok);   border: 1px solid rgba(63,185,80,0.3); }
+    .alert-pill.warning  { background: var(--warn-glow); color: var(--warn); border: 1px solid rgba(210,153,34,0.3); }
+    .alert-pill.critical { background: var(--crit-glow); color: var(--crit); border: 1px solid rgba(248,81,73,0.3); }
+
+    /* DETAIL PANEL */
+    .detail-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      display: none;
+    }
+    .detail-panel.visible { display: block; }
+
+    .detail-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 16px;
+    }
+
+    .detail-title {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .detail-subtitle {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 3px;
+    }
+
+    .close-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 16px;
+      padding: 2px 6px;
+    }
+    .close-btn:hover { color: var(--text); }
+
+    .detail-body {
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      gap: 20px;
+    }
+
+    .chart-wrapper { position: relative; height: 200px; }
+    .chart-wrapper canvas { width: 100% !important; height: 100% !important; }
+
+    .alert-list { display: flex; flex-direction: column; gap: 8px; }
+
+    .alert-item {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+    }
+
+    .alert-item.critical { border-left: 3px solid var(--crit); background: var(--crit-glow); }
+    .alert-item.warning  { border-left: 3px solid var(--warn); background: var(--warn-glow); }
+
+    .alert-item-title {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .alert-item.critical .alert-item-title { color: var(--crit); }
+    .alert-item.warning  .alert-item-title { color: var(--warn); }
+
+    .alert-item-msg {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    .no-alerts {
+      text-align: center;
+      padding: 20px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    /* LOADING + EMPTY */
+    .loading {
+      text-align: center;
+      padding: 48px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 48px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    /* TOOLTIP */
+    .tooltip {
+      position: fixed;
+      background: var(--surface-3);
+      border: 1px solid var(--border-active);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text);
+      pointer-events: none;
+      z-index: 1000;
+      display: none;
+      max-width: 280px;
+    }
+
+    /* Responsive tweaks */
+    @media (max-width: 1100px) {
+      .table-head, .combo-row {
+        grid-template-columns: 28px 1fr 90px 80px 80px 80px 110px;
+      }
+      .th:nth-child(5), .td:nth-child(5) { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-mark">BM</div>
+    <div>
+      <div class="logo-text">BolnaMonitor</div>
+      <div class="logo-sub">Voice Pipeline Drift Detection</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <span class="last-updated" id="lastUpdated">—</span>
+    <div class="live-dot" title="Live"></div>
+    <button class="refresh-btn" onclick="loadAll()">↻ Refresh</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- Summary Cards -->
+  <div class="summary-grid">
+    <div class="stat-card">
+      <div class="stat-label">Turns / Hour</div>
+      <div class="stat-value" id="statTurns">—</div>
+      <div class="stat-sub">last 60 min</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg Latency</div>
+      <div class="stat-value" id="statLatency">—</div>
+      <div class="stat-sub">total turn</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Error Rate</div>
+      <div class="stat-value" id="statErrors">—</div>
+      <div class="stat-sub">empty transcript + errors</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Active Combos</div>
+      <div class="stat-value" id="statCombos">—</div>
+      <div class="stat-sub">ASR+LLM+TTS pipelines</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Drifting</div>
+      <div class="stat-value" id="statDrifting">—</div>
+      <div class="stat-sub">combos with anomalies</div>
+    </div>
+  </div>
+
+  <!-- Alert Banner -->
+  <div class="alert-banner" id="alertBanner">
+    <div class="alert-banner-title">
+      ⚠ Active Alerts
+    </div>
+    <div class="alert-banner-items" id="alertBannerItems"></div>
+  </div>
+
+  <!-- Detail Panel -->
+  <div class="detail-panel" id="detailPanel">
+    <div class="detail-header">
+      <div>
+        <div class="detail-title" id="detailTitle">—</div>
+        <div class="detail-subtitle" id="detailSubtitle">Latency over last 24h (15-min buckets)</div>
+      </div>
+      <button class="close-btn" onclick="closeDetail()">✕</button>
+    </div>
+    <div class="detail-body">
+      <div class="chart-wrapper">
+        <canvas id="detailChart"></canvas>
+      </div>
+      <div>
+        <div style="font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px;">Alerts</div>
+        <div class="alert-list" id="alertList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Combo Table -->
+  <div class="section-header">
+    <div class="section-title">Provider Combos</div>
+    <div class="filter-tabs">
+      <button class="filter-tab active" data-filter="all" onclick="setFilter('all', this)">All</button>
+      <button class="filter-tab" data-filter="critical" onclick="setFilter('critical', this)">Critical</button>
+      <button class="filter-tab" data-filter="warning" onclick="setFilter('warning', this)">Warning</button>
+      <button class="filter-tab" data-filter="ok" onclick="setFilter('ok', this)">OK</button>
+    </div>
+  </div>
+
+  <div class="combo-table">
+    <div class="table-head">
+      <div class="th"></div>
+      <div class="th">Pipeline</div>
+      <div class="th">Status</div>
+      <div class="th">Avg Latency</div>
+      <div class="th">ASR</div>
+      <div class="th">LLM</div>
+      <div class="th">TTS</div>
+      <div class="th">Error Rate</div>
+      <div class="th">Trend (24h)</div>
+    </div>
+    <div id="comboTableBody">
+      <div class="loading">Loading pipeline metrics...</div>
+    </div>
+  </div>
+
+</main>
+
+<div class="tooltip" id="tooltip"></div>
+
+<!-- Chart.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+
+<script>
+  const API = '';  // Same origin — served by FastAPI
+  let allCombos = [];
+  let activeFilter = 'all';
+  let selectedCombo = null;
+  let detailChartInstance = null;
+  let sparklineCache = {};  // combo_key -> timeseries data
+
+  // ── Data Loading ──────────────────────────────────────────────
+
+  async function loadAll() {
+    await Promise.all([loadSummary(), loadCombos()]);
+    document.getElementById('lastUpdated').textContent =
+      'Updated ' + new Date().toLocaleTimeString();
+  }
+
+  async function loadSummary() {
+    try {
+      const r = await fetch(`${API}/api/summary?hours=1`);
+      const d = await r.json();
+
+      const latEl = document.getElementById('statLatency');
+      const errEl = document.getElementById('statErrors');
+      const driftEl = document.getElementById('statDrifting');
+
+      document.getElementById('statTurns').textContent =
+        d.total_turns?.toLocaleString() ?? '—';
+
+      if (d.avg_latency_ms != null) {
+        latEl.textContent = Math.round(d.avg_latency_ms) + 'ms';
+        latEl.className = 'stat-value ' +
+          (d.avg_latency_ms < 600 ? 'ok' : d.avg_latency_ms < 1200 ? '' : 'warn');
+      }
+
+      if (d.error_rate != null) {
+        errEl.textContent = (d.error_rate * 100).toFixed(1) + '%';
+        errEl.className = 'stat-value ' +
+          (d.error_rate < 0.03 ? 'ok' : d.error_rate < 0.08 ? 'warn' : 'crit');
+      }
+
+      document.getElementById('statCombos').textContent = d.active_combos ?? '—';
+
+    } catch(e) {
+      console.error('Summary load failed:', e);
+    }
+  }
+
+  async function loadCombos() {
+    try {
+      const r = await fetch(`${API}/api/combos`);
+      allCombos = await r.json();
+
+      // Update drifting count
+      const drifting = allCombos.filter(c => c.is_drifting).length;
+      const driftEl = document.getElementById('statDrifting');
+      driftEl.textContent = drifting;
+      driftEl.className = 'stat-value ' + (drifting === 0 ? 'ok' : drifting < 3 ? 'warn' : 'crit');
+
+      // Alert banner
+      updateAlertBanner();
+
+      // Load sparklines for all combos
+      await loadSparklines();
+
+      renderTable();
+
+    } catch(e) {
+      console.error('Combos load failed:', e);
+      document.getElementById('comboTableBody').innerHTML =
+        `<div class="empty">Failed to load data. Is the API running?<br><br>
+        <span style="color: var(--text-dim); font-size: 10px;">
+        Run: uvicorn api:app --port 8000<br>
+        Then: python tests/seed_demo_data.py
+        </span></div>`;
+    }
+  }
+
+  async function loadSparklines() {
+    const promises = allCombos.map(async (combo) => {
+      try {
+        const key = encodeURIComponent(combo.combo_key);
+        const r = await fetch(`${API}/api/combos/${key}/timeseries?hours=24&bucket_minutes=30`);
+        sparklineCache[combo.combo_key] = await r.json();
+      } catch(e) {
+        sparklineCache[combo.combo_key] = [];
+      }
+    });
+    await Promise.all(promises);
+  }
+
+  // ── Rendering ─────────────────────────────────────────────────
+
+  function updateAlertBanner() {
+    const alerts = allCombos.filter(c => c.is_drifting);
+    const banner = document.getElementById('alertBanner');
+    const items = document.getElementById('alertBannerItems');
+
+    if (alerts.length === 0) {
+      banner.classList.remove('visible');
+      return;
+    }
+
+    banner.classList.add('visible');
+    items.innerHTML = alerts.map(c => {
+      const reasons = c.alert_reasons.join(' · ');
+      const label = `${c.asr_provider}+${c.llm_provider}+${c.tts_provider}`;
+      return `<div>🔴 <strong>${label}</strong>: ${reasons}</div>`;
+    }).join('');
+  }
+
+  function setFilter(filter, el) {
+    activeFilter = filter;
+    document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    renderTable();
+  }
+
+  function renderTable() {
+    const body = document.getElementById('comboTableBody');
+    const filtered = allCombos.filter(c => {
+      if (activeFilter === 'all') return true;
+      if (activeFilter === 'critical') return c.alert_level === 'critical';
+      if (activeFilter === 'warning') return c.alert_level === 'warning';
+      if (activeFilter === 'ok') return c.alert_level === 'ok';
+      return true;
+    });
+
+    if (filtered.length === 0) {
+      body.innerHTML = `<div class="empty">No combos match this filter.</div>`;
+      return;
+    }
+
+    body.innerHTML = filtered.map(combo => renderComboRow(combo)).join('');
+
+    // Draw sparklines
+    filtered.forEach(combo => {
+      drawSparkline(combo);
+    });
+  }
+
+  function latencyClass(ms) {
+    if (!ms) return '';
+    if (ms < 500) return 'good';
+    if (ms < 800) return 'mid';
+    if (ms < 1300) return 'slow';
+    return 'bad';
+  }
+
+  function zscoreClass(z) {
+    if (z < 1.5) return 'low';
+    if (z < 2.5) return 'mid';
+    return 'high';
+  }
+
+  function renderComboRow(c) {
+    const alertLevel = c.alert_level;
+    const isSelected = selectedCombo?.combo_key === c.combo_key;
+    const lang = c.language || 'en';
+    const langBadge = lang !== 'en'
+      ? `<span class="lang-badge">${lang.toUpperCase()}</span>` : '';
+
+    const errClass = c.recent_error_rate > 0.05 ? 'bad' : 'ok';
+    const errText = c.recent_error_rate > 0
+      ? (c.recent_error_rate * 100).toFixed(1) + '%'
+      : '0.0%';
+
+    return `
+      <div class="combo-row ${alertLevel} ${isSelected ? 'selected' : ''}"
+           data-key="${c.combo_key}"
+           onclick="selectCombo('${c.combo_key}')">
+        <div><div class="status-dot ${alertLevel === 'ok' ? 'ok' : alertLevel}"></div></div>
+
+        <div class="combo-name">
+          <div class="combo-pipeline">
+            <span class="provider-badge asr">${c.asr_provider}</span>
+            <span class="arrow">→</span>
+            <span class="provider-badge llm">${c.llm_provider}</span>
+            <span class="arrow">→</span>
+            <span class="provider-badge tts">${c.tts_provider}</span>
+            ${langBadge}
+          </div>
+          <div style="font-family: var(--font-mono); font-size: 9px; color: var(--text-dim); margin-top: 2px;">
+            ${c.asr_model} · ${c.llm_model} · ${c.tts_model}
+          </div>
+        </div>
+
+        <div><span class="alert-pill ${alertLevel}">${alertLevel}</span></div>
+
+        <div class="td">
+          <span class="latency-val ${latencyClass(c.recent_mean_ms)}">
+            ${c.recent_mean_ms ? Math.round(c.recent_mean_ms) + 'ms' : '—'}
+          </span>
+          ${c.z_score > 1.5
+            ? `<div style="font-size: 9px; color: var(--text-dim); margin-top: 1px;">
+               <span class="${zscoreClass(c.z_score)} zscore">z=${c.z_score.toFixed(1)}</span></div>`
+            : ''}
+        </div>
+
+        <div class="td" style="color: var(--text-dim);">
+          ${c.baseline_mean_ms ? Math.round(c.baseline_mean_ms * 0.3) + 'ms' : '—'}
+        </div>
+
+        <div class="td" style="color: var(--text-dim);">
+          ${c.baseline_mean_ms ? Math.round(c.baseline_mean_ms * 0.45) + 'ms' : '—'}
+        </div>
+
+        <div class="td" style="color: var(--text-dim);">
+          ${c.baseline_mean_ms ? Math.round(c.baseline_mean_ms * 0.25) + 'ms' : '—'}
+        </div>
+
+        <div class="td">
+          <span class="error-rate ${errClass}">${errText}</span>
+        </div>
+
+        <div class="sparkline-cell">
+          <canvas id="spark-${safeId(c.combo_key)}" width="120" height="36"></canvas>
+        </div>
+      </div>`;
+  }
+
+  function safeId(key) {
+    return key.replace(/[^a-zA-Z0-9]/g, '_');
+  }
+
+  function drawSparkline(combo) {
+    const canvasId = `spark-${safeId(combo.combo_key)}`;
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+
+    const data = sparklineCache[combo.combo_key] || [];
+    if (data.length === 0) return;
+
+    const ctx = canvas.getContext('2d');
+    const vals = data.map(d => d.total_ms);
+    const baseline = combo.baseline_mean_ms;
+
+    const isAlert = combo.is_drifting;
+    const lineColor = combo.alert_level === 'critical' ? '#f85149'
+                    : combo.alert_level === 'warning'  ? '#d29922'
+                    : '#3fb950';
+
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    if (vals.length < 2) return;
+
+    const min = Math.min(...vals) * 0.9;
+    const max = Math.max(...vals) * 1.1;
+    const range = max - min || 1;
+
+    const toY = v => h - ((v - min) / range) * (h - 4) - 2;
+    const toX = i => (i / (vals.length - 1)) * w;
+
+    // Baseline line
+    ctx.strokeStyle = 'rgba(125,133,144,0.25)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    const baseY = toY(baseline);
+    ctx.moveTo(0, baseY);
+    ctx.lineTo(w, baseY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Area fill
+    ctx.beginPath();
+    ctx.moveTo(toX(0), h);
+    vals.forEach((v, i) => ctx.lineTo(toX(i), toY(v)));
+    ctx.lineTo(toX(vals.length - 1), h);
+    ctx.closePath();
+    ctx.fillStyle = isAlert
+      ? `rgba(248,81,73,0.08)`
+      : `rgba(63,185,80,0.06)`;
+    ctx.fill();
+
+    // Line
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    vals.forEach((v, i) => {
+      if (i === 0) ctx.moveTo(toX(i), toY(v));
+      else ctx.lineTo(toX(i), toY(v));
+    });
+    ctx.stroke();
+
+    // Last point dot
+    const lastX = toX(vals.length - 1);
+    const lastY = toY(vals[vals.length - 1]);
+    ctx.fillStyle = lineColor;
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // ── Detail Panel ──────────────────────────────────────────────
+
+  async function selectCombo(key) {
+    const combo = allCombos.find(c => c.combo_key === key);
+    if (!combo) return;
+
+    selectedCombo = combo;
+    renderTable(); // Re-render to show selection
+
+    const panel = document.getElementById('detailPanel');
+    panel.classList.add('visible');
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    document.getElementById('detailTitle').textContent =
+      `${combo.asr_provider}/${combo.asr_model}  →  ${combo.llm_provider}/${combo.llm_model}  →  ${combo.tts_provider}/${combo.tts_model}`;
+
+    document.getElementById('detailSubtitle').textContent =
+      `${combo.baseline_count} turns in baseline · language: ${(combo.language || 'en').toUpperCase()} · baseline avg: ${Math.round(combo.baseline_mean_ms)}ms ± ${Math.round(combo.baseline_std_ms)}ms`;
+
+    renderAlertList(combo);
+    await loadDetailChart(key, combo);
+  }
+
+  function renderAlertList(combo) {
+    const el = document.getElementById('alertList');
+    if (!combo.is_drifting || combo.alert_reasons.length === 0) {
+      el.innerHTML = `<div class="no-alerts">✓ No anomalies detected<br><span style="font-size: 10px; color: var(--text-dim)">z-score: ${combo.z_score.toFixed(2)}</span></div>`;
+      return;
+    }
+
+    el.innerHTML = combo.alert_reasons.map(reason => `
+      <div class="alert-item ${combo.alert_level}">
+        <div class="alert-item-title">${combo.alert_level}</div>
+        <div class="alert-item-msg">${reason}</div>
+      </div>
+    `).join('');
+  }
+
+  async function loadDetailChart(key, combo) {
+    const data = sparklineCache[key] || [];
+
+    if (detailChartInstance) {
+      detailChartInstance.destroy();
+      detailChartInstance = null;
+    }
+
+    const canvas = document.getElementById('detailChart');
+    if (!canvas) return;
+
+    const labels = data.map(d => {
+      const date = new Date(d.timestamp);
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    });
+
+    const baseline = combo.baseline_mean_ms;
+    const baselineData = data.map(() => baseline);
+
+    const primaryColor = combo.alert_level === 'critical' ? '#f85149'
+                        : combo.alert_level === 'warning'  ? '#d29922'
+                        : '#3fb950';
+
+    detailChartInstance = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Total Latency (ms)',
+            data: data.map(d => d.total_ms),
+            borderColor: primaryColor,
+            backgroundColor: primaryColor + '18',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.3,
+            pointRadius: 2,
+            pointHoverRadius: 4,
+          },
+          {
+            label: 'Baseline (24h avg)',
+            data: baselineData,
+            borderColor: 'rgba(125,133,144,0.4)',
+            borderWidth: 1,
+            borderDash: [5, 5],
+            fill: false,
+            pointRadius: 0,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: 'index' },
+        plugins: {
+          legend: {
+            labels: {
+              color: '#7d8590',
+              font: { family: 'IBM Plex Mono', size: 10 },
+              boxWidth: 12,
+            }
+          },
+          tooltip: {
+            backgroundColor: '#1c2128',
+            borderColor: '#30363d',
+            borderWidth: 1,
+            titleColor: '#e6edf3',
+            bodyColor: '#7d8590',
+            titleFont: { family: 'IBM Plex Mono', size: 11 },
+            bodyFont: { family: 'IBM Plex Mono', size: 10 },
+            callbacks: {
+              label: ctx => ` ${ctx.dataset.label}: ${Math.round(ctx.raw)}ms`
+            }
+          }
+        },
+        scales: {
+          x: {
+            grid: { color: '#21262d' },
+            ticks: { color: '#444c56', font: { family: 'IBM Plex Mono', size: 9 }, maxTicksLimit: 8 }
+          },
+          y: {
+            grid: { color: '#21262d' },
+            ticks: { color: '#444c56', font: { family: 'IBM Plex Mono', size: 9 },
+              callback: v => v + 'ms' }
+          }
+        }
+      }
+    });
+  }
+
+  function closeDetail() {
+    document.getElementById('detailPanel').classList.remove('visible');
+    selectedCombo = null;
+    renderTable();
+  }
+
+  // ── Init ──────────────────────────────────────────────────────
+
+  loadAll();
+  setInterval(loadAll, 30000); // Auto-refresh every 30s
+</script>
+</body>
+</html>
